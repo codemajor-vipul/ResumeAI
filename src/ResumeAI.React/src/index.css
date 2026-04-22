@@ -1,0 +1,5 @@
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body { font-family: system-ui, -apple-system, sans-serif; background: #f5f5fa; color: #1f2937 }
+code { font-family: 'SF Mono', 'Fira Code', monospace; background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 0.88em }
+textarea, input, select { font-family: inherit }
+button:disabled { opacity: 0.5; cursor: not-allowed }
