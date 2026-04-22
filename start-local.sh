@@ -41,6 +41,13 @@ export RabbitMQ__Password="guest"
 export OpenAI__ApiKey="${OPENAI_API_KEY:-sk-placeholder}"
 export Anthropic__ApiKey="${ANTHROPIC_API_KEY:-sk-placeholder}"
 
+# ── Internal service-to-service URLs (AI → Resume/Section) ────────
+# These must point to the locally running services. The AI service
+# fetches full resume data from Resume API and Section API before
+# building AI prompts — this is what grounds the AI in real data.
+export InternalServices__ResumeApiBaseUrl="http://localhost:5002"
+export InternalServices__SectionApiBaseUrl="http://localhost:5003"
+
 # ── OAuth (fill these in for OAuth testing) ───────────────────────
 export OAuth__Google__ClientId="${GOOGLE_CLIENT_ID:-placeholder}"
 export OAuth__Google__ClientSecret="${GOOGLE_CLIENT_SECRET:-placeholder}"

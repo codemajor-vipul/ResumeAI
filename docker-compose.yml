@@ -81,9 +81,15 @@ services:
       Redis__ConnectionString: "redis:6379"
       OpenAI__ApiKey: "${OPENAI_API_KEY}"
       Anthropic__ApiKey: "${ANTHROPIC_API_KEY}"
+      # Internal service URLs use Docker service names, NOT localhost.
+      # localhost inside a container refers to that container itself.
+      InternalServices__ResumeApiBaseUrl: "http://resume:8080"
+      InternalServices__SectionApiBaseUrl: "http://section:8080"
     depends_on:
       - postgres
       - redis
+      - resume
+      - section
 
   template:
     build:

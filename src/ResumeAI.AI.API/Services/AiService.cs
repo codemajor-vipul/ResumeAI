@@ -2,6 +2,7 @@ using Azure.AI.OpenAI;
 using Ganss.Xss;
 using Microsoft.Extensions.Caching.Distributed;
 using OpenAI.Chat;
+using ResumeAI.AI.API.Clients;
 using ResumeAI.AI.API.Entities;
 using ResumeAI.AI.API.Repositories;
 using ResumeAI.Shared.DTOs;
@@ -13,12 +14,18 @@ namespace ResumeAI.AI.API.Services;
 /// AI Content Service — primary: OpenAI GPT-4o via Azure.AI.OpenAI;
 /// fallback: Anthropic Claude via Anthropic.SDK.
 /// Quota tracked per-user per-month in Redis IDistributedCache.
+///
+/// Every operation fetches the real resume content from the Resume and Section
+/// microservices (via <see cref="IResumeContextClient"/>) before building the
+/// AI prompt, so the model works with the candidate's actual data rather than
+/// only the fields provided in the request body.
 /// </summary>
 public class AiService(
     IAiRequestRepository aiRepo,
     IDistributedCache cache,
     IConfiguration config,
-    ILogger<AiService> logger) : IAiService
+    ILogger<AiService> logger,
+    IResumeContextClient resumeContextClient) : IAiService
 {
     private const int FreeContentQuota = 5;
     private const int FreeAtsQuota = 3;
@@ -27,72 +34,166 @@ public class AiService(
 
     // ─── Public service methods ───────────────────────────────────
 
-    public Task<AiRequestDto> GenerateSummaryAsync(int userId, GenerateSummaryRequest request)
+    public async Task<AiRequestDto> GenerateSummaryAsync(int userId, GenerateSummaryRequest request)
     {
-        var prompt = $"Write a professional resume summary for a {_sanitizer.Sanitize(request.JobTitle)} " +
-                     $"with {request.YearsOfExperience} years of experience. " +
-                     $"Key skills: {_sanitizer.Sanitize(request.KeySkills)}. " +
-                     "Keep it concise, impactful, and ATS-friendly (3-4 sentences).";
-        return ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.SUMMARY, prompt);
+        var resumeContext = await resumeContextClient.BuildResumeContextAsync(request.ResumeId);
+        var contextBlock = WrapContext(resumeContext);
+
+        var prompt =
+            $"Write a professional resume summary for a {_sanitizer.Sanitize(request.JobTitle)} " +
+            $"with {request.YearsOfExperience} years of experience. " +
+            $"Key skills: {_sanitizer.Sanitize(request.KeySkills)}. " +
+            "Keep it concise, impactful, and ATS-friendly (3-4 sentences). " +
+            "Make it consistent with the candidate's existing resume content below." +
+            contextBlock;
+
+        return await ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.SUMMARY, prompt);
     }
 
-    public Task<AiRequestDto> GenerateBulletPointsAsync(int userId, GenerateBulletsRequest request)
+    public async Task<AiRequestDto> GenerateBulletPointsAsync(int userId, GenerateBulletsRequest request)
     {
-        var prompt = $"Generate 4-6 strong resume bullet points for the role of " +
-                     $"{_sanitizer.Sanitize(request.JobTitle)} at {_sanitizer.Sanitize(request.CompanyName)}. " +
-                     $"Responsibilities: {_sanitizer.Sanitize(request.Responsibilities)}. " +
-                     "Use action verbs and quantify achievements where possible.";
-        return ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.BULLETS, prompt);
+        var resumeContext = await resumeContextClient.BuildResumeContextAsync(request.ResumeId);
+        var contextBlock = WrapContext(resumeContext);
+
+        var prompt =
+            $"Generate 4-6 strong resume bullet points for the role of " +
+            $"{_sanitizer.Sanitize(request.JobTitle)} at {_sanitizer.Sanitize(request.CompanyName)}. " +
+            $"Responsibilities: {_sanitizer.Sanitize(request.Responsibilities)}. " +
+            "Use action verbs and quantify achievements where possible. " +
+            "Ensure the tone and level of seniority match the candidate's existing resume." +
+            contextBlock;
+
+        return await ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.BULLETS, prompt);
     }
 
-    public Task<AiRequestDto> GenerateCoverLetterAsync(int userId, GenerateCoverLetterRequest request)
+    public async Task<AiRequestDto> GenerateCoverLetterAsync(int userId, GenerateCoverLetterRequest request)
     {
-        var prompt = $"Write a tailored cover letter for {_sanitizer.Sanitize(request.CompanyName)}. " +
-                     $"Job description: {_sanitizer.Sanitize(request.JobDescription)}. " +
-                     "Keep it professional, enthusiastic, and under 300 words.";
-        return ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.COVER_LETTER, prompt);
+        var resumeContext = await resumeContextClient.BuildResumeContextAsync(request.ResumeId);
+        var contextBlock = WrapContext(resumeContext);
+
+        var prompt =
+            $"Write a tailored cover letter for {_sanitizer.Sanitize(request.CompanyName)}. " +
+            $"Job description: {_sanitizer.Sanitize(request.JobDescription)}. " +
+            "Keep it professional, enthusiastic, and under 300 words. " +
+            "Ground specific claims (skills, experience, achievements) in the candidate's actual resume below." +
+            contextBlock;
+
+        return await ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.COVER_LETTER, prompt);
     }
 
-    public Task<AiRequestDto> ImproveSectionAsync(int userId, ImproveSectionRequest request)
+    public async Task<AiRequestDto> ImproveSectionAsync(int userId, ImproveSectionRequest request)
     {
+        // Fetch the real stored section content from the DB using SectionId — do NOT blindly
+        // trust what the client sends in CurrentContent (stale/partial/wrong data).
+        // Fall back to CurrentContent only if the Section API is unreachable.
+        var sectionTask = resumeContextClient.GetSectionAsync(request.SectionId);
+        var contextTask = resumeContextClient.BuildResumeContextAsync(request.ResumeId);
+        await Task.WhenAll(sectionTask, contextTask);
+
+        var section = sectionTask.Result;
+        var resumeContext = contextTask.Result;
+
+        if (section is null)
+            logger.LogWarning(
+                "Could not fetch section {SectionId} from Section API — " +
+                "falling back to client-provided CurrentContent.",
+                request.SectionId);
+
+        var contentToImprove = section?.Content ?? request.CurrentContent;
+        var contextBlock = WrapContext(resumeContext);
+
         var hint = string.IsNullOrEmpty(request.ImprovementHint)
             ? "more impactful and professional"
             : _sanitizer.Sanitize(request.ImprovementHint);
-        var prompt = $"Rewrite the following resume section to be {hint}:\n\n" +
-                     _sanitizer.Sanitize(request.CurrentContent);
-        return ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.IMPROVE, prompt);
+
+        var prompt =
+            $"Rewrite the following resume section to be {hint}:\n\n" +
+            _sanitizer.Sanitize(contentToImprove) +
+            "\n\nKeep the rewrite consistent with the rest of the candidate's resume below." +
+            contextBlock;
+
+        return await ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.IMPROVE, prompt);
     }
 
-    public Task<AiRequestDto> CheckAtsCompatibilityAsync(int userId, CheckAtsRequest request)
+    public async Task<AiRequestDto> CheckAtsCompatibilityAsync(int userId, CheckAtsRequest request)
     {
-        var prompt = $"Analyse this resume against the job description below. " +
-                     "Return a JSON object with: score (0-100), missingKeywords (array), suggestions (array).\n\n" +
-                     $"Job Description:\n{_sanitizer.Sanitize(request.JobDescription)}";
-        return ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.ATS, prompt,
+        var resumeContext = await resumeContextClient.BuildResumeContextAsync(request.ResumeId);
+
+        if (string.IsNullOrWhiteSpace(resumeContext))
+            logger.LogWarning(
+                "ATS check for resume {ResumeId} has no resume context — analysis will be shallow.",
+                request.ResumeId);
+
+        var contextBlock = WrapContext(resumeContext,
+            fallback: "[No resume content could be retrieved. Provide general ATS guidance only.]");
+
+        var prompt =
+            "Analyse the candidate's resume against the job description below. " +
+            "Return a JSON object with exactly these keys: " +
+            "score (integer 0-100), missingKeywords (string array), suggestions (string array).\n\n" +
+            $"Job Description:\n{_sanitizer.Sanitize(request.JobDescription)}" +
+            contextBlock;
+
+        return await ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.ATS, prompt,
             isAtsCall: true);
     }
 
-    public Task<AiRequestDto> SuggestSkillsAsync(int userId, SuggestSkillsRequest request)
+    public async Task<AiRequestDto> SuggestSkillsAsync(int userId, SuggestSkillsRequest request)
     {
-        var prompt = $"List the top 15 in-demand technical and soft skills for a " +
-                     $"{_sanitizer.Sanitize(request.TargetJobTitle)} role in 2025. " +
-                     "Return as a comma-separated list.";
-        return ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.SKILLS, prompt);
+        var resumeContext = await resumeContextClient.BuildResumeContextAsync(request.ResumeId);
+        var contextBlock = WrapContext(resumeContext);
+
+        var prompt =
+            $"List the top 15 in-demand technical and soft skills for a " +
+            $"{_sanitizer.Sanitize(request.TargetJobTitle)} role in 2025. " +
+            "Prioritise skills the candidate is NOT already showcasing in their resume below. " +
+            "Return as a comma-separated list." +
+            contextBlock;
+
+        return await ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.SKILLS, prompt);
     }
 
-    public Task<AiRequestDto> TailorResumeForJobAsync(int userId, TailorResumeRequest request)
+    public async Task<AiRequestDto> TailorResumeForJobAsync(int userId, TailorResumeRequest request)
     {
-        var prompt = $"Tailor this resume for the job description below. " +
-                     "Return the complete improved resume as JSON.\n\n" +
-                     $"Job Description:\n{_sanitizer.Sanitize(request.JobDescription)}";
-        return ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.TAILOR, prompt);
+        var resumeContext = await resumeContextClient.BuildResumeContextAsync(request.ResumeId);
+
+        if (string.IsNullOrWhiteSpace(resumeContext))
+            logger.LogWarning(
+                "Tailor-for-job for resume {ResumeId} has no resume context — output may be generic.",
+                request.ResumeId);
+
+        var contextBlock = WrapContext(resumeContext,
+            fallback: "[No resume content could be retrieved. Suggest improvements conceptually.]");
+
+        var prompt =
+            "Tailor the candidate's resume for the job description below. " +
+            "Return the complete improved resume as a JSON object whose keys mirror the section titles. " +
+            "Preserve all factual information — only adjust phrasing, emphasis and keyword density.\n\n" +
+            $"Job Description:\n{_sanitizer.Sanitize(request.JobDescription)}" +
+            contextBlock;
+
+        return await ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.TAILOR, prompt);
     }
 
-    public Task<AiRequestDto> TranslateResumeAsync(int userId, TranslateResumeRequest request)
+    public async Task<AiRequestDto> TranslateResumeAsync(int userId, TranslateResumeRequest request)
     {
-        var prompt = $"Translate this resume to {_sanitizer.Sanitize(request.TargetLanguage)}, " +
-                     "maintaining professional tone and formatting. Return as JSON.";
-        return ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.TRANSLATE, prompt);
+        var resumeContext = await resumeContextClient.BuildResumeContextAsync(request.ResumeId);
+
+        if (string.IsNullOrWhiteSpace(resumeContext))
+            logger.LogWarning(
+                "Translate for resume {ResumeId} has no resume context — nothing to translate.",
+                request.ResumeId);
+
+        var contextBlock = WrapContext(resumeContext,
+            fallback: "[No resume content could be retrieved. Cannot perform translation.]");
+
+        var prompt =
+            $"Translate the candidate's resume to {_sanitizer.Sanitize(request.TargetLanguage)}, " +
+            "maintaining a professional tone and standard resume formatting. " +
+            "Return the translated resume as a JSON object whose keys mirror the section titles." +
+            contextBlock;
+
+        return await ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.TRANSLATE, prompt);
     }
 
     public async Task<IList<AiRequestDto>> GetAiHistoryAsync(int userId)
@@ -117,10 +218,7 @@ public class AiService(
     private async Task<AiRequestDto> ExecuteAiCallAsync(
         int userId, int resumeId, AiRequestType type, string prompt, bool isAtsCall = false)
     {
-        // Quota check for free users (quota enforcement in middleware/controller with plan claim)
         var quotaKey = isAtsCall ? "ats" : "content";
-        var used = await GetQuotaCounterAsync(userId, quotaKey);
-        var limit = isAtsCall ? FreeAtsQuota : FreeContentQuota;
 
         var aiReqEntity = new AiRequest
         {
@@ -165,7 +263,6 @@ public class AiService(
         saved.CompletedAt = DateTime.UtcNow;
         await aiRepo.UpdateAsync(saved);
 
-        // Increment Redis quota counter
         await IncrementQuotaCounterAsync(userId, quotaKey);
 
         return MapToDto(saved);
@@ -191,8 +288,7 @@ public class AiService(
         return (text, tokens);
     }
 
-    // ─── Anthropic Claude — removed (OpenAI-only for local dev) ─────
-    // If OpenAI fails the exception propagates to the caller.
+    // ─── Anthropic Claude fallback ────────────────────────────────
     private static Task<(string text, int tokens)> CallClaudeAsync(string _)
         => throw new NotSupportedException("Claude fallback not configured. Check OpenAI key.");
 
@@ -221,6 +317,22 @@ public class AiService(
     {
         var now = DateTime.UtcNow;
         return $"ai-quota:{userId}:{type}:{now.Year}-{now.Month:D2}";
+    }
+
+    // ─── Prompt helpers ───────────────────────────────────────────
+
+    /// <summary>
+    /// Wraps resume context in a clearly delimited block for injection into
+    /// prompts. If <paramref name="resumeContext"/> is empty the
+    /// <paramref name="fallback"/> message is used instead (defaults to an
+    /// empty string, meaning nothing extra is appended).
+    /// </summary>
+    private static string WrapContext(string resumeContext, string fallback = "")
+    {
+        if (string.IsNullOrWhiteSpace(resumeContext))
+            return string.IsNullOrWhiteSpace(fallback) ? string.Empty : $"\n\n{fallback}";
+
+        return $"\n\n=== CANDIDATE'S CURRENT RESUME ===\n{resumeContext.Trim()}\n=== END OF RESUME ===";
     }
 
     // ─── Mapping ─────────────────────────────────────────────────
