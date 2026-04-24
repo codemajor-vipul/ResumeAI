@@ -8,11 +8,11 @@ export default defineConfig({
     // Proxy all /api/* calls to the YARP gateway — no CORS issues in dev
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: 'http://localhost:5115',
         changeOrigin: true,
       },
       '/hubs': {
-        target: 'http://localhost:5000',
+        target: 'http://localhost:5008',
         changeOrigin: true,
         ws: true,
       },
