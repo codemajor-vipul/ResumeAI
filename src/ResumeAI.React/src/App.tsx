@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
+import { NotificationProvider } from './context/NotificationContext'
 import Layout from './components/Layout'
 import AuthPage from './pages/AuthPage'
 import OAuthCallbackPage from './pages/OAuthCallbackPage'
@@ -20,7 +21,7 @@ export default function App() {
       <Route path="/auth" element={<AuthPage />} />
       {/* OAuth redirect landing — must be outside PrivateRoute */}
       <Route path="/auth/callback" element={<OAuthCallbackPage />} />
-      <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
+      <Route path="/" element={<PrivateRoute><NotificationProvider><Layout /></NotificationProvider></PrivateRoute>}>
         <Route index element={<DashboardPage />} />
         <Route path="templates" element={<TemplatesPage />} />
         <Route path="resume" element={<ResumeFlowPage />} />

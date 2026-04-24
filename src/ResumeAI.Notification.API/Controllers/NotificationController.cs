@@ -3,17 +3,22 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ResumeAI.Notification.API.Services;
 using ResumeAI.Shared.DTOs;
+using ResumeAI.Shared.Enums;
 
 namespace ResumeAI.Notification.API.Controllers;
 
 [ApiController]
 [Route("api/notifications")]
 [Authorize]
-public class NotificationController(INotificationService notifService) : ControllerBase
+public class NotificationController(
+    INotificationService notifService,
+    IConfiguration config) : ControllerBase
 {
     private int CurrentUserId =>
         int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
             ?? throw new UnauthorizedAccessException());
+
+    // ── User-facing endpoints ─────────────────────────────────────
 
     [HttpGet]
     public async Task<IActionResult> GetByRecipient()
@@ -56,9 +61,46 @@ public class NotificationController(INotificationService notifService) : Control
         [FromBody] SendBulkNotificationRequest request,
         [FromQuery] List<int>? recipientIds = null)
     {
-        // In production: lookup recipients by plan tier from Auth service
         var ids = recipientIds ?? new List<int>();
         await notifService.SendBulkAsync(request, ids);
         return NoContent();
     }
+
+    // ── Internal service-to-service endpoint ──────────────────────
+    // Called by AI, Export and JobMatch services using a shared secret.
+    // No user JWT required — the recipientId is supplied in the body.
+
+    [AllowAnonymous]
+    [HttpPost("internal")]
+    public async Task<IActionResult> SendInternal(
+        [FromBody] InternalNotificationRequest request)
+    {
+        var expectedKey = config["Notifications:InternalKey"];
+        if (string.IsNullOrEmpty(expectedKey))
+            return StatusCode(503, "Internal notifications not configured.");
+
+        var providedKey = Request.Headers["X-Internal-Key"].ToString();
+        if (providedKey != expectedKey)
+            return Unauthorized("Invalid internal key.");
+
+        await notifService.SendAsync(
+            request.RecipientId,
+            request.Title,
+            request.Message,
+            request.Type,
+            NotificationChannel.APP,
+            request.RelatedId,
+            request.RelatedType);
+
+        return NoContent();
+    }
 }
+
+/// <summary>Payload for the internal service-to-service notification endpoint.</summary>
+public record InternalNotificationRequest(
+    int RecipientId,
+    string Title,
+    string Message,
+    NotificationType Type,
+    string? RelatedId = null,
+    string? RelatedType = null);

@@ -54,6 +54,12 @@ export OAuth__Google__ClientSecret="${GOOGLE_CLIENT_SECRET:-placeholder}"
 export OAuth__LinkedIn__ClientId="${LINKEDIN_CLIENT_ID:-placeholder}"
 export OAuth__LinkedIn__ClientSecret="${LINKEDIN_CLIENT_SECRET:-placeholder}"
 
+# ── Internal service-to-service shared secret ────────────────────
+# AI, Export and JobMatch call the Notification API using this key.
+# Set INTERNAL_KEY in your shell env to override for staging/prod.
+export Notifications__InternalKey="${INTERNAL_KEY:-dev-internal-secret-change-in-prod}"
+export Services__NotificationBaseUrl="http://localhost:5008"
+
 # ─────────────────────────────────────────────────────────────────
 # Helper: start one service in background
 # Usage: start_service <display-name> <project-path> <port>

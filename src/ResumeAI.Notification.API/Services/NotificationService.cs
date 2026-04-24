@@ -54,12 +54,16 @@ public class NotificationService(
             await SendEmailAsync(recipientId, title, message);
         }
 
-        // Push unread count update via SignalR
+        // Push full notification DTO + updated unread count via SignalR
+        var dto = MapToDto(notification);
         var unreadCount = await GetUnreadCountAsync(recipientId);
-        await hubContext.Clients.User(recipientId.ToString())
-            .SendAsync("UnreadCountUpdated", unreadCount);
+        var userIdStr = recipientId.ToString();
+        await hubContext.Clients.User(userIdStr)
+            .SendAsync(NotificationHub.ReceiveNotification, dto);
+        await hubContext.Clients.User(userIdStr)
+            .SendAsync(NotificationHub.UnreadCountUpdated, unreadCount);
 
-        return MapToDto(notification);
+        return dto;
     }
 
     public async Task SendBulkAsync(SendBulkNotificationRequest request, IList<int> recipientIds)
@@ -76,11 +80,16 @@ public class NotificationService(
         db.Notifications.AddRange(notifications);
         await db.SaveChangesAsync();
 
-        // Push to each recipient via SignalR
-        foreach (var id in recipientIds)
+        // Push full DTO + unread count to each recipient via SignalR
+        var savedDtos = notifications.Select(MapToDto).ToList();
+        foreach (var (notif, id) in savedDtos.Zip(recipientIds))
         {
-            await hubContext.Clients.User(id.ToString())
-                .SendAsync("NewNotification", request.Title);
+            var unread = await GetUnreadCountAsync(id);
+            var userIdStr = id.ToString();
+            await hubContext.Clients.User(userIdStr)
+                .SendAsync(NotificationHub.ReceiveNotification, notif);
+            await hubContext.Clients.User(userIdStr)
+                .SendAsync(NotificationHub.UnreadCountUpdated, unread);
         }
     }
 

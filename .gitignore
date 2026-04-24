@@ -53,3 +53,16 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+# React / Node
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+
+# Large zip artifacts
+*.zip
+
+# Local export files
+exports/
+logs/

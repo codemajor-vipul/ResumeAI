@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using ResumeAI.Notification.API.Data;
@@ -13,8 +14,20 @@ builder.Services.AddDbContext<NotificationDbContext>(opt =>
 
 builder.Services.AddScoped<INotificationService, NotificationService>();
 
-// SignalR for real-time unread badge
+// SignalR — custom IUserIdProvider so Clients.User(userId) actually works
 builder.Services.AddSignalR();
+builder.Services.AddSingleton<IUserIdProvider, JwtUserIdProvider>();
+
+// CORS — required for SignalR WebSocket negotiation from the React dev server
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? ["http://localhost:3000"];
+
+builder.Services.AddCors(opts => opts.AddDefaultPolicy(p =>
+    p.WithOrigins(allowedOrigins)
+     .AllowAnyHeader()
+     .AllowAnyMethod()
+     .AllowCredentials()));
 
 var jwtSecret = builder.Configuration["Jwt:Secret"]!;
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -63,6 +76,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
