@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ResumeAI.Section.API.Data;
 using ResumeAI.Section.API.Entities;
+using ResumeAI.Section.API.Interfaces;
 using ResumeAI.Shared.Enums;
 
 namespace ResumeAI.Section.API.Repositories;
@@ -59,4 +60,19 @@ public class SectionRepository(SectionDbContext db) : ISectionRepository
 
     public Task DeleteBySectionIdAsync(int sectionId)
         => db.ResumeSections.Where(s => s.SectionId == sectionId).ExecuteDeleteAsync();
+
+    public Task MarkAsAiGeneratedAsync(int sectionId)
+        => db.ResumeSections
+             .Where(s => s.SectionId == sectionId)
+             .ExecuteUpdateAsync(p => p.SetProperty(s => s.AiGenerated, true));
+
+    public async Task UpdateRangeAsync(IEnumerable<ResumeSection> sections)
+    {
+        foreach (var section in sections)
+        {
+            section.UpdatedAt = DateTime.UtcNow;
+        }
+        db.ResumeSections.UpdateRange(sections);
+        await db.SaveChangesAsync();
+    }
 }

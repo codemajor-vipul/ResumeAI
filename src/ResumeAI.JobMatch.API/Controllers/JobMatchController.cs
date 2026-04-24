@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using ResumeAI.JobMatch.API.Services;
+using ResumeAI.JobMatch.API.Interfaces;
 using ResumeAI.Shared.DTOs;
 
 namespace ResumeAI.JobMatch.API.Controllers;
@@ -18,47 +18,40 @@ public class JobMatchController(IJobMatchService matchService) : ControllerBase
     [HttpPost("analyze")]
     public async Task<IActionResult> Analyze([FromBody] AnalyzeJobFitRequest request)
     {
-        var match = await matchService.AnalyzeJobFitAsync(CurrentUserId, request);
+        var match = await matchService.AnalyzeJobFit(CurrentUserId, request);
         return Ok(ApiResponse<JobMatchDto>.Ok(match));
     }
 
     [HttpGet("by-resume/{resumeId:int}")]
     public async Task<IActionResult> GetByResume(int resumeId)
-        => Ok(ApiResponse<IList<JobMatchDto>>.Ok(await matchService.GetMatchesByResumeAsync(resumeId)));
+        => Ok(ApiResponse<IList<JobMatchDto>>.Ok(await matchService.GetMatchesByResume(resumeId)));
 
     [HttpGet("my")]
     public async Task<IActionResult> GetByUser()
-        => Ok(ApiResponse<IList<JobMatchDto>>.Ok(await matchService.GetMatchesByUserAsync(CurrentUserId)));
+        => Ok(ApiResponse<IList<JobMatchDto>>.Ok(await matchService.GetMatchesByUser(CurrentUserId)));
 
     [HttpGet("{matchId:int}")]
     public async Task<IActionResult> GetById(int matchId)
     {
-        var match = await matchService.GetMatchByIdAsync(matchId);
+        var match = await matchService.GetMatchById(matchId);
         return match is null ? NotFound() : Ok(ApiResponse<JobMatchDto>.Ok(match));
     }
 
     [HttpGet("top")]
     public async Task<IActionResult> GetTopMatches([FromQuery] int minScore = 70)
-        => Ok(ApiResponse<IList<JobMatchDto>>.Ok(await matchService.GetTopMatchesAsync(CurrentUserId, minScore)));
+        => Ok(ApiResponse<IList<JobMatchDto>>.Ok(await matchService.GetTopMatches(CurrentUserId, minScore)));
 
     [HttpPost("{matchId:int}/bookmark")]
     public async Task<IActionResult> Bookmark(int matchId, [FromQuery] bool bookmarked = true)
     {
-        await matchService.BookmarkMatchAsync(matchId, bookmarked);
+        await matchService.BookmarkMatch(matchId, bookmarked);
         return NoContent();
     }
 
     [HttpPost("fetch/linkedin")]
     public async Task<IActionResult> FetchLinkedIn([FromQuery] int resumeId, [FromQuery] string keywords)
     {
-        var matches = await matchService.FetchJobsFromLinkedInAsync(CurrentUserId, resumeId, keywords);
-        return Ok(ApiResponse<IList<JobMatchDto>>.Ok(matches));
-    }
-
-    [HttpPost("fetch/naukri")]
-    public async Task<IActionResult> FetchNaukri([FromQuery] int resumeId, [FromQuery] string keywords)
-    {
-        var matches = await matchService.FetchJobsFromNaukriAsync(CurrentUserId, resumeId, keywords);
+        var matches = await matchService.FetchJobsFromLinkedIn(CurrentUserId, resumeId, keywords);
         return Ok(ApiResponse<IList<JobMatchDto>>.Ok(matches));
     }
 
@@ -67,7 +60,7 @@ public class JobMatchController(IJobMatchService matchService) : ControllerBase
     {
         try
         {
-            var rec = await matchService.GetTailoringRecommendationsAsync(matchId);
+            var rec = await matchService.GetTailoringRecommendations(matchId);
             return Ok(ApiResponse<string>.Ok(rec));
         }
         catch (KeyNotFoundException ex) { return NotFound(ApiResponse<string>.Fail(ex.Message)); }
@@ -76,7 +69,7 @@ public class JobMatchController(IJobMatchService matchService) : ControllerBase
     [HttpDelete("{matchId:int}")]
     public async Task<IActionResult> Delete(int matchId)
     {
-        await matchService.DeleteMatchAsync(matchId);
+        await matchService.DeleteMatch(matchId);
         return NoContent();
     }
 }

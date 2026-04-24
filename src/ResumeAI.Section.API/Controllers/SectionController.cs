@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using ResumeAI.Section.API.Interfaces;
 using ResumeAI.Section.API.Services;
 using ResumeAI.Shared.DTOs;
 using ResumeAI.Shared.Enums;
@@ -52,6 +53,7 @@ public class SectionController(ISectionService sectionService) : ControllerBase
     }
 
     [HttpPut("reorder/{resumeId:int}")]
+    // [Authorize(Policy = "PremiumOnly")]
     public async Task<IActionResult> Reorder(int resumeId, [FromBody] ReorderSectionsRequest request)
     {
         await sectionService.ReorderSectionsAsync(resumeId, request);
@@ -70,6 +72,7 @@ public class SectionController(ISectionService sectionService) : ControllerBase
     }
 
     [HttpPut("bulk-update")]
+    // [Authorize(Policy = "PremiumOnly")]
     public async Task<IActionResult> BulkUpdate([FromBody] BulkUpdateSectionsRequest request)
     {
         var sections = await sectionService.BulkUpdateSectionsAsync(request);
@@ -88,5 +91,19 @@ public class SectionController(ISectionService sectionService) : ControllerBase
     {
         await sectionService.DeleteAllSectionsAsync(resumeId);
         return NoContent();
+    }
+
+    [HttpPatch("{sectionId:int}/ai-generated")]
+    public async Task<IActionResult> MarkAsAiGenerated(int sectionId)
+    {
+        await sectionService.MarkAsAiGeneratedAsync(sectionId);
+        return NoContent();
+    }
+
+    [HttpGet("count/{resumeId:int}")]
+    public async Task<IActionResult> GetCount(int resumeId)
+    {
+        var count = await sectionService.CountSectionsByResumeAsync(resumeId);
+        return Ok(ApiResponse<int>.Ok(count));
     }
 }

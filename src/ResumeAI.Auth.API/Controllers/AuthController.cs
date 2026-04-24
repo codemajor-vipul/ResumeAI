@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using ResumeAI.Auth.API.Services;
 using ResumeAI.Shared.DTOs;
 using ResumeAI.Shared.Enums;
+using ResumeAI.Auth.API.Interfaces;
 
 namespace ResumeAI.Auth.API.Controllers;
 
@@ -61,10 +62,21 @@ public class AuthController(IAuthService authService) : ControllerBase
             var token = await authService.RefreshTokenAsync(refreshToken);
             return Ok(ApiResponse<string>.Ok(token));
         }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Unauthorized(ApiResponse<string>.Fail(ex.Message));
+        }
         catch (NotImplementedException ex)
         {
             return StatusCode(501, ApiResponse<string>.Fail(ex.Message));
         }
+    }
+
+    [HttpGet("validate")]
+    public IActionResult ValidateToken([FromQuery] string token)
+    {
+        var isValid = authService.ValidateToken(token);
+        return Ok(ApiResponse<bool>.Ok(isValid));
     }
 
     [Authorize]
@@ -117,10 +129,22 @@ public class AuthController(IAuthService authService) : ControllerBase
     // Admin-only
     [Authorize(Roles = "ADMIN")]
     [HttpGet("users")]
-    public async Task<IActionResult> GetAllUsers()
+    public async Task<IActionResult> GetAllUsers([FromQuery] Role? role)
     {
         var users = await authService.GetAllUsersAsync();
+        if (role.HasValue)
+        {
+            users = users.Where(u => u.Role == role.Value).ToList();
+        }
         return Ok(ApiResponse<IList<UserDto>>.Ok(users));
+    }
+
+    [Authorize(Roles = "ADMIN")]
+    [HttpGet("users/{userId:int}")]
+    public async Task<IActionResult> AdminGetUser(int userId)
+    {
+        var user = await authService.GetUserByIdAsync(userId);
+        return user is null ? NotFound() : Ok(ApiResponse<UserDto>.Ok(user));
     }
 
     [Authorize(Roles = "ADMIN")]
@@ -135,8 +159,23 @@ public class AuthController(IAuthService authService) : ControllerBase
     [HttpDelete("users/{userId:int}")]
     public async Task<IActionResult> AdminDeleteUser(int userId)
     {
-        // Delegate to deactivate for soft-delete; hard-delete would need repo access
-        await authService.DeactivateAccountAsync(userId);
+        await authService.HardDeleteUserAsync(userId);
+        return NoContent();
+    }
+
+    [Authorize(Roles = "ADMIN")]
+    [HttpPut("users/{userId:int}/reactivate")]
+    public async Task<IActionResult> AdminReactivateUser(int userId)
+    {
+        await authService.ReactivateAccountAsync(userId);
+        return NoContent();
+    }
+
+    [Authorize(Roles = "ADMIN")]
+    [HttpPut("users/{userId:int}/suspend")]
+    public async Task<IActionResult> AdminSuspendUser(int userId)
+    {
+        await authService.SuspendUserAsync(userId);
         return NoContent();
     }
 

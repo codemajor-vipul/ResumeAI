@@ -9,6 +9,9 @@ using ResumeAI.Auth.API.Data;
 using ResumeAI.Auth.API.Entities;
 using ResumeAI.Auth.API.Repositories;
 using ResumeAI.Auth.API.Services;
+using Microsoft.OpenApi.Models;
+using ResumeAI.Shared.Enums;
+using ResumeAI.Auth.API.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,6 +21,7 @@ builder.Services.AddDbContext<AuthDbContext>(opt =>
 
 // ─── DI registrations ────────────────────────────────────────────
 builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 
@@ -101,9 +105,40 @@ builder.Services.AddAuthorization(opts =>
     opts.AddPolicy("PremiumOnly", p => p.RequireClaim("plan", "PREMIUM"));
 });
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new() { Title = "ResumeAI Auth API", Version = "v1" });
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "Bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Paste your JWT token directly in the text input below."
+    });
+
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
 
 var app = builder.Build();
 
@@ -112,6 +147,24 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AuthDbContext>();
     db.Database.Migrate();
+
+    // ─── Data Seeding ─────────────────────────────────────────────
+    if (!db.Users.Any(u => u.Role == Role.ADMIN))
+    {
+        var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<User>>();
+        var admin = new User
+        {
+            FullName = "System Admin",
+            Email = "admin@resumeai.com",
+            Role = Role.ADMIN,
+            IsActive = true,
+            SubscriptionPlan = SubscriptionPlan.PREMIUM,
+            Provider = AuthProvider.LOCAL
+        };
+        admin.PasswordHash = hasher.HashPassword(admin, "AdminPassword123!");
+        db.Users.Add(admin);
+        db.SaveChanges();
+    }
 }
 
 if (app.Environment.IsDevelopment())

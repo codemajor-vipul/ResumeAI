@@ -21,4 +21,10 @@
     <ProjectReference Include="..\ResumeAI.Shared\ResumeAI.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="SeedTemplates\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

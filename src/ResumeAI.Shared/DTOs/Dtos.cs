@@ -30,6 +30,7 @@ public record UserDto(
 
 public record UpdateProfileRequest(
     string FullName,
+    string Email,
     string? Phone);
 
 public record ChangePasswordRequest(
@@ -42,12 +43,13 @@ public record UpdateSubscriptionRequest(SubscriptionPlan Plan);
 public record CreateResumeRequest(
     string Title,
     string TargetJobTitle,
-    int TemplateId,
+    int TemplateId = 1,
     string Language = "en");
 
 public record UpdateResumeRequest(
     string Title,
     string TargetJobTitle,
+    int TemplateId,
     string Language,
     ResumeStatus Status);
 
@@ -63,7 +65,8 @@ public record ResumeDto(
     bool IsPublic,
     int ViewCount,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    IList<SectionDto>? Sections = null);
 
 // ─── Section DTOs ───────────────────────────────────────────────
 public record AddSectionRequest(
@@ -77,7 +80,9 @@ public record AddSectionRequest(
 public record UpdateSectionRequest(
     string Title,
     string Content,
-    bool IsVisible);
+    int DisplayOrder,
+    bool IsVisible,
+    bool? AiGenerated = null);
 
 public record SectionDto(
     int SectionId,
@@ -95,7 +100,13 @@ public record ReorderSectionsRequest(IList<int> OrderedSectionIds);
 
 public record BulkUpdateSectionsRequest(IList<UpdateSectionItem> Sections);
 
-public record UpdateSectionItem(int SectionId, string Title, string Content, bool IsVisible);
+public record UpdateSectionItem(
+    int SectionId,
+    string Title,
+    string Content,
+    int DisplayOrder,
+    bool IsVisible,
+    bool? AiGenerated = null);
 
 // ─── Template DTOs ──────────────────────────────────────────────
 public record CreateTemplateRequest(
@@ -121,11 +132,18 @@ public record TemplateDto(
     string Name,
     string Description,
     string ThumbnailUrl,
+    string HtmlLayout,
+    string CssStyles,
     TemplateCategory Category,
     bool IsPremium,
     bool IsActive,
     int UsageCount,
     DateTime CreatedAt);
+
+public record TemplatePreviewDto(
+    int TemplateId,
+    string HtmlLayout,
+    string CssStyles);
 
 // ─── AI DTOs ────────────────────────────────────────────────────
 public record GenerateSummaryRequest(
@@ -189,7 +207,6 @@ public record AiQuotaDto(
 // ─── Export DTOs ────────────────────────────────────────────────
 public record ExportRequest(
     int ResumeId,
-    ExportFormat Format,
     string? Customizations = null);
 
 public record ExportJobDto(
@@ -209,6 +226,8 @@ public record AnalyzeJobFitRequest(
     int ResumeId,
     string JobTitle,
     string JobDescription,
+    string? CompanyName = null,
+    string? Location = null,
     JobMatchSource Source = JobMatchSource.MANUAL);
 
 public record JobMatchDto(
@@ -217,6 +236,8 @@ public record JobMatchDto(
     int UserId,
     string JobTitle,
     string JobDescription,
+    string? CompanyName,
+    string? Location,
     int MatchScore,
     string MissingSkills,
     string Recommendations,
@@ -248,4 +269,11 @@ public record ApiResponse<T>(bool Success, T? Data, string? Error = null)
 {
     public static ApiResponse<T> Ok(T data) => new(true, data);
     public static ApiResponse<T> Fail(string error) => new(false, default, error);
+}
+
+public record PaginationRequest(int Page = 1, int PageSize = 10);
+
+public record PagedResponse<T>(IList<T> Items, int TotalCount, int Page, int PageSize)
+{
+    public int TotalPages => (int)Math.Ceiling(TotalCount / (double)PageSize);
 }

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using ResumeAI.AI.API.Data;
 using ResumeAI.AI.API.Entities;
 using ResumeAI.Shared.Enums;
+using ResumeAI.AI.API.Interfaces;
 
 namespace ResumeAI.AI.API.Repositories;
 

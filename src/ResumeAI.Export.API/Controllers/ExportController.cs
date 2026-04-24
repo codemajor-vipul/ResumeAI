@@ -1,8 +1,9 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using ResumeAI.Export.API.Services;
+using ResumeAI.Export.API.Interfaces;
 using ResumeAI.Shared.DTOs;
+using ResumeAI.Shared.Enums;
 
 namespace ResumeAI.Export.API.Controllers;
 
@@ -52,13 +53,40 @@ public class ExportController(IExportService exportService) : ControllerBase
         return Ok(ApiResponse<IList<ExportJobDto>>.Ok(jobs));
     }
 
+    [HttpGet("stats")]
+    public async Task<IActionResult> GetStats()
+    {
+        var stats = await exportService.GetExportStatsAsync();
+        return Ok(ApiResponse<IDictionary<string, int>>.Ok(stats));
+    }
+
     [HttpGet("{jobId}/download")]
     public async Task<IActionResult> Download(string jobId)
     {
         try
         {
+            var job = await exportService.GetJobStatusAsync(jobId);
+            if (job == null) return NotFound();
+
             var bytes = await exportService.DownloadFileAsync(jobId);
-            return File(bytes, "application/octet-stream", jobId);
+            
+            var contentType = job.Format switch
+            {
+                ExportFormat.PDF => "application/pdf",
+                ExportFormat.DOCX => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ExportFormat.JSON => "application/json",
+                _ => "application/octet-stream"
+            };
+
+            var extension = job.Format switch
+            {
+                ExportFormat.PDF => ".pdf",
+                ExportFormat.DOCX => ".docx",
+                ExportFormat.JSON => ".json",
+                _ => ".bin"
+            };
+
+            return File(bytes, contentType, $"resume_{job.ResumeId}{extension}");
         }
         catch (KeyNotFoundException) { return NotFound(); }
         catch (InvalidOperationException ex) { return BadRequest(ex.Message); }

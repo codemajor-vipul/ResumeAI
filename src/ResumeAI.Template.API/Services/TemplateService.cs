@@ -2,22 +2,9 @@ using ResumeAI.Shared.DTOs;
 using ResumeAI.Shared.Enums;
 using ResumeAI.Template.API.Entities;
 using ResumeAI.Template.API.Repositories;
+using ResumeAI.Template.API.Interfaces;
 
 namespace ResumeAI.Template.API.Services;
-
-public interface ITemplateService
-{
-    Task<TemplateDto> CreateTemplateAsync(CreateTemplateRequest request);
-    Task<TemplateDto?> GetTemplateByIdAsync(int templateId);
-    Task<IList<TemplateDto>> GetAllTemplatesAsync();
-    Task<IList<TemplateDto>> GetFreeTemplatesAsync();
-    Task<IList<TemplateDto>> GetPremiumTemplatesAsync();
-    Task<IList<TemplateDto>> GetByCategoryAsync(TemplateCategory category);
-    Task<IList<TemplateDto>> GetPopularTemplatesAsync(int top = 10);
-    Task<TemplateDto> UpdateTemplateAsync(int templateId, UpdateTemplateRequest request);
-    Task DeactivateTemplateAsync(int templateId);
-    Task IncrementUsageAsync(int templateId);
-}
 
 public class TemplateService(ITemplateRepository templateRepo) : ITemplateService
 {
@@ -84,7 +71,35 @@ public class TemplateService(ITemplateRepository templateRepo) : ITemplateServic
     public Task IncrementUsageAsync(int templateId)
         => templateRepo.UpdateUsageCountAsync(templateId);
 
+    public async Task<TemplatePreviewDto?> GetTemplatePreviewAsync(int templateId)
+    {
+        var t = await templateRepo.FindByTemplateIdAsync(templateId);
+        return t is null ? null : new TemplatePreviewDto(t.TemplateId, t.HtmlLayout, t.CssStyles);
+    }
+
+    public async Task<bool> CanUserAccessTemplateAsync(int templateId, SubscriptionPlan userPlan)
+    {
+        var t = await templateRepo.FindByTemplateIdAsync(templateId);
+        if (t == null) return false;
+        if (!t.IsPremium) return true;
+        return userPlan == SubscriptionPlan.PREMIUM;
+    }
+
+    public Task<(bool Valid, string? Error)> ValidateTemplateLayoutAsync(string html, string css)
+    {
+        if (string.IsNullOrWhiteSpace(html)) return Task.FromResult((false, (string?)"HTML layout cannot be empty."));
+        if (!html.Contains("{{") || !html.Contains("}}")) 
+            return Task.FromResult((false, (string?)"HTML layout must contain at least one placeholder (e.g. {{FullName}})."));
+        
+        // Simple sanitization check (could be more complex)
+        if (html.Contains("<script") || html.Contains("javascript:"))
+            return Task.FromResult((false, (string?)"HTML layout contains forbidden scripts."));
+
+        return Task.FromResult((true, (string?)null));
+    }
+
     private static TemplateDto MapToDto(ResumeTemplate t) =>
         new(t.TemplateId, t.Name, t.Description, t.ThumbnailUrl,
+            t.HtmlLayout, t.CssStyles,
             t.Category, t.IsPremium, t.IsActive, t.UsageCount, t.CreatedAt);
 }

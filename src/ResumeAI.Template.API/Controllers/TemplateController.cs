@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using ResumeAI.Shared.DTOs;
 using ResumeAI.Shared.Enums;
 using ResumeAI.Template.API.Services;
+using ResumeAI.Template.API.Interfaces;
 
 namespace ResumeAI.Template.API.Controllers;
 
@@ -43,10 +44,21 @@ public class TemplateController(ITemplateService templateService) : ControllerBa
         return template is null ? NotFound() : Ok(ApiResponse<TemplateDto>.Ok(template));
     }
 
+    [AllowAnonymous]
+    [HttpGet("{templateId:int}/preview")]
+    public async Task<IActionResult> GetPreview(int templateId)
+    {
+        var preview = await templateService.GetTemplatePreviewAsync(templateId);
+        return preview is null ? NotFound() : Ok(ApiResponse<TemplatePreviewDto>.Ok(preview));
+    }
+
     [Authorize(Roles = "ADMIN")]
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateTemplateRequest request)
     {
+        var (valid, error) = await templateService.ValidateTemplateLayoutAsync(request.HtmlLayout, request.CssStyles);
+        if (!valid) return BadRequest(ApiResponse<TemplateDto>.Fail(error!));
+
         var template = await templateService.CreateTemplateAsync(request);
         return CreatedAtAction(nameof(GetById), new { templateId = template.TemplateId },
             ApiResponse<TemplateDto>.Ok(template));
@@ -58,6 +70,9 @@ public class TemplateController(ITemplateService templateService) : ControllerBa
     {
         try
         {
+            var (valid, error) = await templateService.ValidateTemplateLayoutAsync(request.HtmlLayout, request.CssStyles);
+            if (!valid) return BadRequest(ApiResponse<TemplateDto>.Fail(error!));
+
             var template = await templateService.UpdateTemplateAsync(templateId, request);
             return Ok(ApiResponse<TemplateDto>.Ok(template));
         }

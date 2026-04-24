@@ -7,11 +7,13 @@ using ResumeAI.Auth.API.Entities;
 using ResumeAI.Auth.API.Repositories;
 using ResumeAI.Shared.DTOs;
 using ResumeAI.Shared.Enums;
+using ResumeAI.Auth.API.Interfaces;
 
 namespace ResumeAI.Auth.API.Services;
 
 public class AuthService(
     IUserRepository userRepo,
+    IRefreshTokenRepository tokenRepo,
     IConfiguration config,
     IPasswordHasher<User> hasher) : IAuthService
 {
@@ -30,7 +32,7 @@ public class AuthService(
         user.PasswordHash = hasher.HashPassword(user, request.Password);
 
         var saved = await userRepo.AddAsync(user);
-        return BuildAuthResponse(saved);
+        return await BuildAuthResponse(saved);
     }
 
     public async Task<AuthResponse> LoginAsync(LoginRequest request)
@@ -44,11 +46,16 @@ public class AuthService(
         var result = hasher.VerifyHashedPassword(user, user.PasswordHash, request.Password);
         if (result == PasswordVerificationResult.Failed)
             throw new UnauthorizedAccessException("Invalid credentials.");
-
-        return BuildAuthResponse(user);
+ 
+        return await BuildAuthResponse(user);
     }
 
     public Task LogoutAsync(int userId) => Task.CompletedTask; // stateless JWT
+
+    public async Task LogoutAllAsync(int userId)
+    {
+        await tokenRepo.RevokeAllForUserAsync(userId);
+    }
 
     public async Task<UserDto?> GetUserByIdAsync(int userId)
     {
@@ -60,7 +67,12 @@ public class AuthService(
     {
         var user = await userRepo.FindByUserIdAsync(userId)
                    ?? throw new KeyNotFoundException("User not found.");
+
+        if (user.Email != request.Email && await userRepo.ExistsByEmailAsync(request.Email))
+            throw new InvalidOperationException("Email already taken.");
+
         user.FullName = request.FullName;
+        user.Email = request.Email;
         user.Phone = request.Phone;
         var updated = await userRepo.UpdateAsync(user);
         return MapToDto(updated);
@@ -94,17 +106,85 @@ public class AuthService(
         user.IsActive = false;
         await userRepo.UpdateAsync(user);
     }
-
-    public Task<string> RefreshTokenAsync(string refreshToken)
+ 
+    public async Task SuspendUserAsync(int userId)
     {
-        // TODO: implement refresh token store (Redis or DB table)
-        throw new NotImplementedException("Refresh token store not yet implemented.");
+        var user = await userRepo.FindByUserIdAsync(userId)
+                   ?? throw new KeyNotFoundException("User not found.");
+        user.IsActive = false;
+        await userRepo.UpdateAsync(user);
+        await tokenRepo.RevokeAllForUserAsync(userId);
+    }
+
+    public async Task ReactivateAccountAsync(int userId)
+    {
+        var user = await userRepo.FindByUserIdAsync(userId)
+                   ?? throw new KeyNotFoundException("User not found.");
+        user.IsActive = true;
+        await userRepo.UpdateAsync(user);
+    }
+
+    public async Task HardDeleteUserAsync(int userId)
+    {
+        await userRepo.DeleteByUserIdAsync(userId);
+    }
+
+    public async Task<string> RefreshTokenAsync(string refreshToken)
+    {
+        var existing = await tokenRepo.FindByTokenAsync(refreshToken);
+        if (existing == null || existing.IsRevoked || existing.ExpiresAt < DateTime.UtcNow)
+            throw new UnauthorizedAccessException("Invalid or expired refresh token.");
+
+        if (!existing.User.IsActive)
+            throw new UnauthorizedAccessException("Account suspended.");
+
+        // Revoke current token
+        await tokenRepo.RevokeByTokenAsync(refreshToken);
+
+        // Issue new JWT (return just the token string as per interface)
+        return GenerateJwt(existing.User);
+    }
+
+    public bool ValidateToken(string token)
+    {
+        var handler = new JwtSecurityTokenHandler();
+        var key = Encoding.UTF8.GetBytes(config["Jwt:Secret"] ?? string.Empty);
+
+        try
+        {
+            handler.ValidateToken(token, new TokenValidationParameters
+            {
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(key),
+                ValidateIssuer = true,
+                ValidIssuer = config["Jwt:Issuer"],
+                ValidateAudience = true,
+                ValidAudience = config["Jwt:Audience"],
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.Zero
+            }, out _);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public async Task<IList<UserDto>> GetAllUsersAsync()
     {
-        var all = await userRepo.FindAllByRoleAsync(Role.USER);
+        var all = await userRepo.FindAllAsync();
         return all.Select(MapToDto).ToList();
+    }
+
+    public async Task SyncOAuthProfileAsync(int userId, string fullName, string email)
+    {
+        var user = await userRepo.FindByUserIdAsync(userId)
+                   ?? throw new KeyNotFoundException("User not found.");
+
+        user.FullName = fullName;
+        user.Email = email;
+        await userRepo.UpdateAsync(user);
     }
 
     public async Task<AuthResponse> OAuthLoginAsync(
@@ -129,7 +209,11 @@ public class AuthService(
             if (!existing.IsActive)
                 throw new UnauthorizedAccessException("Account is suspended.");
 
-            return BuildAuthResponse(existing);
+            // Sync profile on every login
+            existing.FullName = fullName;
+            await userRepo.UpdateAsync(existing);
+ 
+            return await BuildAuthResponse(existing);
         }
 
         // First-time OAuth login: create the user. No password — OAuth users
@@ -145,16 +229,25 @@ public class AuthService(
         };
 
         var saved = await userRepo.AddAsync(user);
-        return BuildAuthResponse(saved);
+        return await BuildAuthResponse(saved);
     }
 
     // ─── Helpers ──────────────────────────────────────────────────
-    private AuthResponse BuildAuthResponse(User user)
+    private async Task<AuthResponse> BuildAuthResponse(User user)
     {
         var token = GenerateJwt(user);
+        var refreshToken = Guid.NewGuid().ToString("N");
+
+        await tokenRepo.AddAsync(new RefreshToken
+        {
+            Token = refreshToken,
+            UserId = user.UserId,
+            ExpiresAt = DateTime.UtcNow.AddDays(7)
+        });
+
         return new AuthResponse(
             Token: token,
-            RefreshToken: Guid.NewGuid().ToString(), // placeholder
+            RefreshToken: refreshToken,
             ExpiresAt: DateTime.UtcNow.AddHours(8),
             User: MapToDto(user));
     }

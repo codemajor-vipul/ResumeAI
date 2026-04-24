@@ -1,4 +1,5 @@
 using ResumeAI.Section.API.Entities;
+using ResumeAI.Section.API.Interfaces;
 using ResumeAI.Section.API.Repositories;
 using ResumeAI.Shared.DTOs;
 using ResumeAI.Shared.Enums;
@@ -44,9 +45,16 @@ public class SectionService(ISectionRepository sectionRepo) : ISectionService
     {
         var section = await sectionRepo.FindBySectionIdAsync(sectionId)
                       ?? throw new KeyNotFoundException("Section not found.");
+        
         section.Title = request.Title;
         section.Content = request.Content;
+        section.DisplayOrder = request.DisplayOrder;
         section.IsVisible = request.IsVisible;
+        
+        // If request explicitly sets AiGenerated, use it. 
+        // Otherwise, if this is a manual update, set AiGenerated to false.
+        section.AiGenerated = request.AiGenerated ?? false;
+
         var updated = await sectionRepo.UpdateAsync(section);
         return MapToDto(updated);
     }
@@ -77,19 +85,53 @@ public class SectionService(ISectionRepository sectionRepo) : ISectionService
 
     public async Task<IList<SectionDto>> BulkUpdateSectionsAsync(BulkUpdateSectionsRequest request)
     {
-        // ChangeTracker pattern: batch all updates, single SaveChangesAsync
-        var updated = new List<SectionDto>();
+        var sectionEntities = new List<ResumeSection>();
         foreach (var item in request.Sections)
         {
             var section = await sectionRepo.FindBySectionIdAsync(item.SectionId);
             if (section is null) continue;
+
             section.Title = item.Title;
             section.Content = item.Content;
+            section.DisplayOrder = item.DisplayOrder;
             section.IsVisible = item.IsVisible;
-            var saved = await sectionRepo.UpdateAsync(section);
-            updated.Add(MapToDto(saved));
+            section.AiGenerated = item.AiGenerated ?? false;
+
+            sectionEntities.Add(section);
         }
-        return updated;
+
+        if (sectionEntities.Count > 0)
+        {
+            await sectionRepo.UpdateRangeAsync(sectionEntities);
+        }
+
+        return sectionEntities.Select(MapToDto).ToList();
+    }
+
+    public Task MarkAsAiGeneratedAsync(int sectionId)
+        => sectionRepo.MarkAsAiGeneratedAsync(sectionId);
+
+    public Task<int> CountSectionsByResumeAsync(int resumeId)
+        => sectionRepo.CountByResumeIdAsync(resumeId);
+
+    public async Task<SectionDto> CopySectionAsync(int sectionId, int targetResumeId)
+    {
+        var original = await sectionRepo.FindBySectionIdAsync(sectionId)
+                       ?? throw new KeyNotFoundException("Section not found.");
+        
+        var copy = new ResumeSection
+        {
+            ResumeId = targetResumeId,
+            SectionType = original.SectionType,
+            Title = original.Title,
+            Content = original.Content,
+            DisplayOrder = original.DisplayOrder,
+            IsVisible = original.IsVisible,
+            AiGenerated = original.AiGenerated
+        };
+        
+        var saved = await sectionRepo.AddAsync(copy);
+        return MapToDto(saved);
     }
 
     private static SectionDto MapToDto(ResumeSection s) =>

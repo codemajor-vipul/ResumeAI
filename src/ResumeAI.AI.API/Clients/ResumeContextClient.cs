@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using ResumeAI.Shared.DTOs;
+using ResumeAI.AI.API.Interfaces;
 
 namespace ResumeAI.AI.API.Clients;
 

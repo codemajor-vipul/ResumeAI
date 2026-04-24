@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.OpenApi.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -6,6 +7,7 @@ using ResumeAI.AI.API.Clients;
 using ResumeAI.AI.API.Data;
 using ResumeAI.AI.API.Repositories;
 using ResumeAI.AI.API.Services;
+using ResumeAI.AI.API.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -46,6 +48,9 @@ builder.Services.AddStackExchangeRedisCache(opts =>
         ?? "localhost:6379";
 });
 
+// ─── Background Services ──────────────────────────────────────────
+builder.Services.AddHostedService<QuotaResetService>();
+
 // ─── JWT authentication ───────────────────────────────────────────
 var jwtSecret = builder.Configuration["Jwt:Secret"]!;
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -70,7 +75,38 @@ builder.Services.AddAuthorization(opts =>
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "ResumeAI.AI.API", Version = "v1" });
+
+    // Add JWT bearer definition
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "Bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Paste your JWT token directly in the text input below."
+    });
+
+    // Require token for all endpoints
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
 
 var app = builder.Build();
 

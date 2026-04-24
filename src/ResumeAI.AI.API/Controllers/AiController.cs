@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using ResumeAI.AI.API.Services;
+using ResumeAI.AI.API.Interfaces;
 using ResumeAI.Shared.DTOs;
 
 namespace ResumeAI.AI.API.Controllers;
@@ -72,6 +72,14 @@ public class AiController(IAiService aiService) : ControllerBase
     public async Task<IActionResult> Translate([FromBody] TranslateResumeRequest request)
     {
         var result = await aiService.TranslateResumeAsync(CurrentUserId, request);
+        return Ok(ApiResponse<AiRequestDto>.Ok(result));
+    }
+
+    [Authorize(Policy = "PremiumOnly")]
+    [HttpPost("analyze-job-fit")]
+    public async Task<IActionResult> AnalyzeJobFit([FromBody] CheckAtsRequest request)
+    {
+        var result = await aiService.AnalyzeJobFitAsync(CurrentUserId, request);
         return Ok(ApiResponse<AiRequestDto>.Ok(result));
     }
 

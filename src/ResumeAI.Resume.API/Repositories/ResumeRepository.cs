@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ResumeAI.Resume.API.Data;
 using ResumeAI.Resume.API.Entities;
+using ResumeAI.Resume.API.Interfaces;
 using ResumeAI.Shared.Enums;
 
 namespace ResumeAI.Resume.API.Repositories;
@@ -65,4 +66,10 @@ public class ResumeRepository(ResumeDbContext db) : IResumeRepository
 
     public Task DeleteByResumeIdAsync(int resumeId)
         => db.Resumes.Where(r => r.ResumeId == resumeId).ExecuteDeleteAsync();
+
+    public Task<ResumeRecord?> FindWithSectionsAsync(int resumeId)
+        => db.Resumes
+             .Include(r => r.Sections)
+             .AsNoTracking()
+             .FirstOrDefaultAsync(r => r.ResumeId == resumeId);
 }

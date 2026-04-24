@@ -1,18 +1,21 @@
-using Azure.AI.OpenAI;
 using Ganss.Xss;
 using Microsoft.Extensions.Caching.Distributed;
 using OpenAI.Chat;
+using OpenAI;
 using ResumeAI.AI.API.Clients;
 using ResumeAI.AI.API.Entities;
 using ResumeAI.AI.API.Repositories;
+using ResumeAI.AI.API.Interfaces;
 using ResumeAI.Shared.DTOs;
 using ResumeAI.Shared.Enums;
 
+using ResumeAI.Shared.Enums;
+using Microsoft.AspNetCore.Http;
+using System.Security.Claims;
+
 namespace ResumeAI.AI.API.Services;
 
-/// <summary>
-/// AI Content Service — primary: OpenAI GPT-4o via Azure.AI.OpenAI;
-/// fallback: Anthropic Claude via Anthropic.SDK.
+/// AI Content Service — uses Groq/OpenAI for all AI generation.
 /// Quota tracked per-user per-month in Redis IDistributedCache.
 ///
 /// Every operation fetches the real resume content from the Resume and Section
@@ -25,8 +28,13 @@ public class AiService(
     IDistributedCache cache,
     IConfiguration config,
     ILogger<AiService> logger,
+    IHttpContextAccessor httpContextAccessor,
     IResumeContextClient resumeContextClient) : IAiService
 {
+    private SubscriptionPlan CurrentUserPlan =>
+        Enum.TryParse<SubscriptionPlan>(httpContextAccessor.HttpContext?.User.FindFirstValue("plan"), true, out var plan)
+            ? plan
+            : SubscriptionPlan.FREE;
     private const int FreeContentQuota = 5;
     private const int FreeAtsQuota = 3;
 
@@ -196,6 +204,21 @@ public class AiService(
         return await ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.TRANSLATE, prompt);
     }
 
+    public async Task<AiRequestDto> AnalyzeJobFitAsync(int userId, CheckAtsRequest request)
+    {
+        var resumeContext = await resumeContextClient.BuildResumeContextAsync(request.ResumeId);
+        var contextBlock = WrapContext(resumeContext);
+
+        var prompt =
+            "Analyze the candidate's resume against the job description below. " +
+            "Return a JSON object with exactly these keys: " +
+            "matchScore (integer 0-100), missingSkills (comma-separated string), recommendations (string).\n\n" +
+            $"Job Description:\n{_sanitizer.Sanitize(request.JobDescription)}" +
+            contextBlock;
+
+        return await ExecuteAiCallAsync(userId, request.ResumeId, AiRequestType.JOB_MATCH, prompt, isAtsCall: true);
+    }
+
     public async Task<IList<AiRequestDto>> GetAiHistoryAsync(int userId)
     {
         var requests = await aiRepo.FindByUserIdAsync(userId);
@@ -219,6 +242,19 @@ public class AiService(
         int userId, int resumeId, AiRequestType type, string prompt, bool isAtsCall = false)
     {
         var quotaKey = isAtsCall ? "ats" : "content";
+        var limit = isAtsCall ? FreeAtsQuota : FreeContentQuota;
+
+        // ENFORCE QUOTA: Skip check if user is PREMIUM
+        if (CurrentUserPlan != SubscriptionPlan.PREMIUM)
+        {
+            var currentUsage = await GetQuotaCounterAsync(userId, quotaKey);
+            if (currentUsage >= limit)
+            {
+                throw new InvalidOperationException(
+                    $"Monthly quota reached. You have used all {limit} of your free {quotaKey} AI calls. " +
+                    "Please upgrade to Premium for unlimited access.");
+            }
+        }
 
         var aiReqEntity = new AiRequest
         {
@@ -241,19 +277,10 @@ public class AiService(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "OpenAI call failed — falling back to Claude.");
-            try
-            {
-                (responseText, tokens) = await CallClaudeAsync(prompt);
-                usedModel = AiModel.CLAUDE;
-            }
-            catch (Exception fallbackEx)
-            {
-                logger.LogError(fallbackEx, "Both AI providers failed.");
-                saved.Status = AiRequestStatus.FAILED;
-                await aiRepo.UpdateAsync(saved);
-                throw new InvalidOperationException("AI service unavailable. Please try again later.");
-            }
+            logger.LogError(ex, "AI call failed.");
+            saved.Status = AiRequestStatus.FAILED;
+            await aiRepo.UpdateAsync(saved);
+            throw new InvalidOperationException("AI service unavailable. Please try again later.");
         }
 
         saved.AiResponse = responseText;
@@ -275,11 +302,11 @@ public class AiService(
         var endpoint = config["OpenAI:Endpoint"];
         var apiKey = config["OpenAI:ApiKey"]
             ?? throw new InvalidOperationException("OpenAI:ApiKey not configured.");
+        var model = config["OpenAI:ModelName"] ?? "llama-3.3-70b-versatile";
 
-        AzureOpenAIClient client = new(new Uri(endpoint ?? "https://api.openai.com/v1"),
-            new System.ClientModel.ApiKeyCredential(apiKey));
-
-        var chatClient = client.GetChatClient("gpt-4o");
+        // Using standard OpenAI ChatClient with Groq endpoint
+        ChatClient chatClient = new(model, new System.ClientModel.ApiKeyCredential(apiKey), new OpenAIClientOptions { Endpoint = new Uri(endpoint ?? "https://api.openai.com/v1") });
+        
         var completion = await chatClient.CompleteChatAsync(
             [new UserChatMessage(prompt)]);
 
@@ -288,9 +315,6 @@ public class AiService(
         return (text, tokens);
     }
 
-    // ─── Anthropic Claude fallback ────────────────────────────────
-    private static Task<(string text, int tokens)> CallClaudeAsync(string _)
-        => throw new NotSupportedException("Claude fallback not configured. Check OpenAI key.");
 
     // ─── Redis quota helpers ──────────────────────────────────────
 

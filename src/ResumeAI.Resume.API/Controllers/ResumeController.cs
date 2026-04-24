@@ -1,8 +1,10 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using ResumeAI.Resume.API.Interfaces;
 using ResumeAI.Resume.API.Services;
 using ResumeAI.Shared.DTOs;
+using ResumeAI.Shared.Enums;
 
 namespace ResumeAI.Resume.API.Controllers;
 
@@ -15,12 +17,24 @@ public class ResumeController(IResumeService resumeService) : ControllerBase
         int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
             ?? throw new UnauthorizedAccessException());
 
+    private SubscriptionPlan CurrentUserPlan =>
+        Enum.TryParse<SubscriptionPlan>(User.FindFirstValue("plan"), out var plan)
+            ? plan
+            : SubscriptionPlan.FREE;
+
     [HttpPost]
     public async Task<IActionResult> CreateResume([FromBody] CreateResumeRequest request)
     {
-        var resume = await resumeService.CreateResumeAsync(CurrentUserId, request);
-        return CreatedAtAction(nameof(GetById), new { resumeId = resume.ResumeId },
-            ApiResponse<ResumeDto>.Ok(resume));
+        try
+        {
+            var resume = await resumeService.CreateResumeAsync(CurrentUserId, CurrentUserPlan, request);
+            return CreatedAtAction(nameof(GetById), new { resumeId = resume.ResumeId },
+                ApiResponse<ResumeDto>.Ok(resume));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<ResumeDto>.Fail(ex.Message));
+        }
     }
 
     [HttpPost("{resumeId:int}/duplicate")]
@@ -32,6 +46,7 @@ public class ResumeController(IResumeService resumeService) : ControllerBase
             return Ok(ApiResponse<ResumeDto>.Ok(copy));
         }
         catch (KeyNotFoundException ex) { return NotFound(ApiResponse<ResumeDto>.Fail(ex.Message)); }
+        catch (UnauthorizedAccessException) { return Forbid(); }
     }
 
     [HttpGet("{resumeId:int}")]
@@ -72,10 +87,11 @@ public class ResumeController(IResumeService resumeService) : ControllerBase
     {
         try
         {
-            var resume = await resumeService.UpdateResumeAsync(resumeId, request);
+            var resume = await resumeService.UpdateResumeAsync(resumeId, CurrentUserId, request);
             return Ok(ApiResponse<ResumeDto>.Ok(resume));
         }
         catch (KeyNotFoundException ex) { return NotFound(ApiResponse<ResumeDto>.Fail(ex.Message)); }
+        catch (UnauthorizedAccessException) { return Forbid(); }
     }
 
     [HttpPut("{resumeId:int}/publish")]
@@ -83,10 +99,11 @@ public class ResumeController(IResumeService resumeService) : ControllerBase
     {
         try
         {
-            var resume = await resumeService.PublishResumeAsync(resumeId);
+            var resume = await resumeService.PublishResumeAsync(resumeId, CurrentUserId);
             return Ok(ApiResponse<ResumeDto>.Ok(resume));
         }
         catch (KeyNotFoundException ex) { return NotFound(ApiResponse<ResumeDto>.Fail(ex.Message)); }
+        catch (UnauthorizedAccessException) { return Forbid(); }
     }
 
     [HttpPut("{resumeId:int}/unpublish")]
@@ -94,10 +111,11 @@ public class ResumeController(IResumeService resumeService) : ControllerBase
     {
         try
         {
-            var resume = await resumeService.UnpublishResumeAsync(resumeId);
+            var resume = await resumeService.UnpublishResumeAsync(resumeId, CurrentUserId);
             return Ok(ApiResponse<ResumeDto>.Ok(resume));
         }
         catch (KeyNotFoundException ex) { return NotFound(ApiResponse<ResumeDto>.Fail(ex.Message)); }
+        catch (UnauthorizedAccessException) { return Forbid(); }
     }
 
     [HttpPut("{resumeId:int}/ats-score")]
@@ -111,7 +129,12 @@ public class ResumeController(IResumeService resumeService) : ControllerBase
     [HttpDelete("{resumeId:int}")]
     public async Task<IActionResult> DeleteResume(int resumeId)
     {
-        await resumeService.DeleteResumeAsync(resumeId);
-        return NoContent();
+        try
+        {
+            await resumeService.DeleteResumeAsync(resumeId, CurrentUserId);
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex) { return NotFound(ApiResponse<ResumeDto>.Fail(ex.Message)); }
+        catch (UnauthorizedAccessException) { return Forbid(); }
     }
 }
