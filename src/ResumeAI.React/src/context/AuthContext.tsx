@@ -1,13 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { authApi } from '../api'
-
-interface User {
-  userId: number
-  fullName: string
-  email: string
-  subscriptionPlan: string
-  role: string
-}
+import type { User } from '../types'
 
 interface AuthCtx {
   user: User | null

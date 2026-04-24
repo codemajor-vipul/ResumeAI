@@ -35,6 +35,8 @@ export default function Layout() {
           <NavItem to="/templates"  label="🎨 Templates"   />
           <NavItem to="/resume"     label="📄 Resume Flow" />
           <NavItem to="/jobmatch"   label="🎯 Job Match"   />
+          <NavItem to="/exports"    label="📦 Exports"      />
+          <NavItem to="/profile"    label="👤 Profile"      />
 
           {/* Notifications — live unread badge */}
           <NavLink to="/notifications"

@@ -1,92 +1,198 @@
 import { useState } from 'react'
 import { resumeApi, jobMatchApi } from '../api'
+import type { Resume, JobMatch } from '../types'
+import { card, btn, input, textarea, select, row, C, errBox, scoreColor, tabBtn } from '../styles'
 
-const card: React.CSSProperties = { background: '#fff', borderRadius: 12, padding: '1.5rem', boxShadow: '0 2px 12px rgba(0,0,0,.06)', marginBottom: 16 }
-const inp: React.CSSProperties = { width: '100%', padding: '0.5rem 0.75rem', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, marginBottom: 8, boxSizing: 'border-box' }
-const btn = (c = '#6366f1'): React.CSSProperties => ({ padding: '0.5rem 1.2rem', borderRadius: 8, border: 'none', background: c, color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: 13, marginRight: 8 })
+type Tab = 'analyze' | 'my' | 'top'
 
 export default function JobMatchPage() {
-  const [resumes, setResumes]   = useState<any[]>([])
-  const [resumeId, setResumeId] = useState('')
-  const [jobTitle, setJobTitle] = useState('Senior Software Engineer')
-  const [jobDesc, setJobDesc]   = useState('We are looking for a .NET developer with experience in microservices, Docker, and PostgreSQL...')
-  const [matches, setMatches]   = useState<any[]>([])
-  const [err, setErr]           = useState('')
-  const [loading, setLoading]   = useState(false)
+  const [tab,      setTab]     = useState<Tab>('analyze')
+  const [resumes,  setResumes] = useState<Resume[]>([])
+  const [resumeId, setResumeId]= useState('')
+  const [jobTitle, setJobTitle]= useState('Senior Software Engineer')
+  const [jobDesc,  setJobDesc] = useState('We are looking for a .NET developer with experience in microservices, Docker, and PostgreSQL.')
+  const [matches,  setMatches] = useState<JobMatch[]>([])
+  const [activeMatch, setActiveMatch] = useState<JobMatch | null>(null)
+  const [recs,     setRecs]    = useState<string>('')
+  const [err,      setErr]     = useState('')
+  const [busy,     setBusy]    = useState(false)
 
-  const run = async (fn: () => Promise<any>) => {
-    setErr(''); setLoading(true)
+  const run = async <T,>(fn: () => Promise<T>): Promise<T | null> => {
+    setErr(''); setBusy(true)
     try { return await fn() }
-    catch (e: any) { setErr(e?.response?.data?.error ?? e.message) }
-    finally { setLoading(false) }
+    catch (e: any) { setErr(e?.response?.data?.error ?? e?.message ?? 'Error'); return null }
+    finally { setBusy(false) }
   }
 
-  const loadResumes  = () => run(async () => { const d = await resumeApi.getAll(); setResumes(d) })
-  const analyze      = () => run(async () => {
+  const loadResumes = () => run(async () => { const d = await resumeApi.getAll(); setResumes(d); return d })
+  const analyze = () => run(async () => {
+    if (!resumeId) { setErr('Select a resume first'); return }
     const m = await jobMatchApi.analyze({ resumeId: Number(resumeId), jobTitle, jobDescription: jobDesc })
     setMatches(prev => [m, ...prev])
+    return m
   })
-  const loadMatches  = () => run(async () => { const d = await jobMatchApi.getByResume(Number(resumeId)); setMatches(d) })
-  const loadTop      = () => run(async () => { const d = await jobMatchApi.getTop(60); setMatches(d) })
-  const toggleBookmark = (m: any) => run(async () => { await jobMatchApi.bookmark(m.matchId, !m.isBookmarked); await loadMatches() })
+  const loadMy  = () => run(async () => { const d = await jobMatchApi.getMyMatches();   setMatches(d); return d })
+  const loadTop = () => run(async () => { const d = await jobMatchApi.getTop(60);        setMatches(d); return d })
+  const loadForResume = () => run(async () => { if (!resumeId) return; const d = await jobMatchApi.getByResume(Number(resumeId)); setMatches(d); return d })
 
-  const scoreColor = (s: number) => s >= 80 ? '#22c55e' : s >= 60 ? '#f59e0b' : '#ef4444'
+  const bookmark = (m: JobMatch) => run(async () => {
+    await jobMatchApi.bookmark(m.matchId, !m.isBookmarked)
+    setMatches(prev => prev.map(x => x.matchId === m.matchId ? { ...x, isBookmarked: !x.isBookmarked } : x))
+  })
+  const del = (m: JobMatch) => run(async () => {
+    await jobMatchApi.delete(m.matchId)
+    setMatches(prev => prev.filter(x => x.matchId !== m.matchId))
+    if (activeMatch?.matchId === m.matchId) { setActiveMatch(null); setRecs('') }
+  })
+  const loadRecs = (m: JobMatch) => run(async () => {
+    setActiveMatch(m); setRecs('')
+    const r = await jobMatchApi.getRecommendations(m.matchId)
+    setRecs(r)
+    return r
+  })
+
+  const tabs: { key: Tab; label: string }[] = [
+    { key: 'analyze', label: '🔍 Analyse New' },
+    { key: 'my',      label: '📋 My Matches'  },
+    { key: 'top',     label: '⭐ Top Matches'  },
+  ]
 
   return (
-    <div style={{ padding: '2rem' }}>
-      <h2 style={{ margin: '0 0 8px', fontSize: 22 }}>🎯 Job Match</h2>
-      <p style={{ margin: '0 0 20px', color: '#6b7280', fontSize: 14 }}>
-        Analyse how well your resume fits a job description. Requires PREMIUM plan.
+    <div style={{ padding: '2rem', maxWidth: 960, margin: '0 auto' }}>
+      <h2 style={{ margin: '0 0 4px', fontSize: 22 }}>🎯 Job Match</h2>
+      <p style={{ margin: '0 0 20px', color: C.textSub, fontSize: 14 }}>
+        AI-powered job fit analysis. Requires <span style={pill(C.indigo)}>PREMIUM</span> plan.
       </p>
 
-      <div style={card}>
-        <h3 style={{ margin: '0 0 12px' }}>Analyse Fit</h3>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <button style={btn('#6b7280')} onClick={loadResumes}>Load Resumes</button>
-        </div>
-        {resumes.length > 0 && (
-          <select style={inp} value={resumeId} onChange={e => setResumeId(e.target.value)}>
-            <option value="">— select resume —</option>
-            {resumes.map((r: any) => <option key={r.resumeId} value={r.resumeId}>{r.title} (#{r.resumeId})</option>)}
-          </select>
-        )}
-        {resumes.length === 0 && <input style={inp} value={resumeId} onChange={e => setResumeId(e.target.value)} placeholder="Resume ID (get it from Resume Flow page)" />}
-        <input style={inp} value={jobTitle} onChange={e => setJobTitle(e.target.value)} placeholder="Job title" />
-        <textarea style={{ ...inp, minHeight: 100 }} value={jobDesc} onChange={e => setJobDesc(e.target.value)} placeholder="Paste full job description here…" />
-
-        {err && <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '0.6rem', color: '#dc2626', fontSize: 13, marginBottom: 8 }}>{err}</div>}
-
-        <div>
-          <button style={btn()} onClick={analyze} disabled={loading || !resumeId}>
-            {loading ? '…' : '🔍 Analyse Job Fit'}
-          </button>
-          <button style={btn('#6b7280')} onClick={loadMatches} disabled={!resumeId}>Load for Resume</button>
-          <button style={btn('#8b5cf6')} onClick={loadTop}>Top Matches (≥60%)</button>
-        </div>
+      <div style={{ ...row, marginBottom: 20 }}>
+        {tabs.map(t => <button key={t.key} style={tabBtn(tab === t.key)} onClick={() => { setTab(t.key); setActiveMatch(null); setRecs('') }}>{t.label}</button>)}
       </div>
 
-      {matches.length > 0 && (
+      {err && <div style={errBox}>{err}</div>}
+
+      {/* Tab: Analyse */}
+      {tab === 'analyze' && (
         <div style={card}>
-          <h3 style={{ margin: '0 0 12px' }}>Results ({matches.length})</h3>
-          {matches.map((m: any) => (
-            <div key={m.matchId} style={{ borderBottom: '1px solid #f3f4f6', padding: '0.8rem 0' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-                <span style={{ fontSize: 24, fontWeight: 700, color: scoreColor(m.matchScore) }}>{m.matchScore}%</span>
-                <div>
-                  <strong>{m.jobTitle}</strong>
-                  <span style={{ fontSize: 12, color: '#6b7280', marginLeft: 8 }}>#{m.matchId} · {m.source}</span>
-                </div>
-                <button style={{ marginLeft: 'auto', padding: '0.3rem 0.8rem', borderRadius: 8, border: 'none', cursor: 'pointer', background: m.isBookmarked ? '#fef3c7' : '#f3f4f6', fontSize: 13 }}
-                  onClick={() => toggleBookmark(m)}>
-                  {m.isBookmarked ? '★ Saved' : '☆ Save'}
-                </button>
-              </div>
-              {m.missingSkills && <p style={{ fontSize: 12, color: '#ef4444', margin: '4px 0' }}>Missing: {m.missingSkills}</p>}
-              {m.recommendations && <p style={{ fontSize: 12, color: '#6b7280', margin: '4px 0' }}>{m.recommendations}</p>}
-            </div>
-          ))}
+          <h3 style={{ margin: '0 0 14px' }}>Analyse Job Fit</h3>
+
+          <div style={row}>
+            <button style={btn(C.gray)} onClick={loadResumes} disabled={busy}>🔄 Load My Resumes</button>
+          </div>
+          {resumes.length > 0
+            ? <select style={select} value={resumeId} onChange={e => setResumeId(e.target.value)}>
+                <option value="">— select resume —</option>
+                {resumes.map(r => <option key={r.resumeId} value={r.resumeId}>{r.title} (#{r.resumeId})</option>)}
+              </select>
+            : <input style={input} value={resumeId} onChange={e => setResumeId(e.target.value)} placeholder="Resume ID" />
+          }
+          <input style={input} value={jobTitle} onChange={e => setJobTitle(e.target.value)} placeholder="Job title" />
+          <textarea style={{ ...textarea, minHeight: 120 }} value={jobDesc} onChange={e => setJobDesc(e.target.value)} placeholder="Paste the full job description here…" />
+
+          <div style={row}>
+            <button style={btn()} onClick={analyze} disabled={busy || !resumeId}>
+              {busy ? '…' : '🔍 Analyse Fit'}
+            </button>
+            <button style={btn(C.sky)} onClick={loadForResume} disabled={!resumeId || busy}>
+              Load for This Resume
+            </button>
+          </div>
+
+          <MatchList matches={matches} active={activeMatch} busy={busy} recs={recs}
+            onBookmark={bookmark} onDelete={del} onRecs={loadRecs} />
+        </div>
+      )}
+
+      {/* Tab: My Matches */}
+      {tab === 'my' && (
+        <div style={card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <h3 style={{ margin: 0 }}>All My Matches ({matches.length})</h3>
+            <button style={btn(C.gray)} onClick={loadMy} disabled={busy}>🔄 Load</button>
+          </div>
+          {matches.length === 0 && !busy && <p style={{ color: C.textSub, fontSize: 14 }}>No matches yet. Use Analyse New tab to run an analysis.</p>}
+          <MatchList matches={matches} active={activeMatch} busy={busy} recs={recs}
+            onBookmark={bookmark} onDelete={del} onRecs={loadRecs} />
+        </div>
+      )}
+
+      {/* Tab: Top Matches */}
+      {tab === 'top' && (
+        <div style={card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <h3 style={{ margin: 0 }}>Top Matches (≥ 60%)</h3>
+            <button style={btn(C.gray)} onClick={loadTop} disabled={busy}>🔄 Load Top</button>
+          </div>
+          {matches.length === 0 && !busy && <p style={{ color: C.textSub, fontSize: 14 }}>Click "Load Top" to see your best matches.</p>}
+          <MatchList matches={matches} active={activeMatch} busy={busy} recs={recs}
+            onBookmark={bookmark} onDelete={del} onRecs={loadRecs} />
         </div>
       )}
     </div>
   )
+}
+
+// ── Match list ─────────────────────────────────────────────────────────────────
+function MatchList({ matches, active, busy, recs, onBookmark, onDelete, onRecs }: {
+  matches: JobMatch[]
+  active: JobMatch | null
+  busy: boolean
+  recs: string
+  onBookmark: (m: JobMatch) => void
+  onDelete: (m: JobMatch) => void
+  onRecs: (m: JobMatch) => void
+}) {
+  return (
+    <>
+      {matches.map(m => (
+        <div key={m.matchId} style={{ borderBottom: `1px solid ${C.grayL}`, padding: '10px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {/* Score ring */}
+            <div style={{ textAlign: 'center', minWidth: 52 }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: scoreColor(m.matchScore) }}>{m.matchScore}%</div>
+              <div style={{ fontSize: 10, color: C.textSub }}>fit</div>
+            </div>
+
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <strong style={{ fontSize: 14 }}>{m.jobTitle}</strong>
+              <span style={{ fontSize: 11, color: C.textSub, marginLeft: 8 }}>#{m.matchId} · {m.source}</span>
+              <div style={{ fontSize: 11, color: C.textSub, marginTop: 2 }}>
+                Resume #{m.resumeId} · {new Date(m.createdAt).toLocaleDateString()}
+              </div>
+              {m.missingSkills && (
+                <p style={{ margin: '4px 0 0', fontSize: 12, color: C.red }}>
+                  Missing skills: {m.missingSkills}
+                </p>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <button style={btn(m.isBookmarked ? '#fbbf24' : C.gray, m.isBookmarked ? '#1e1e2e' : '#fff')}
+                onClick={() => onBookmark(m)} disabled={busy}>
+                {m.isBookmarked ? '★' : '☆'}
+              </button>
+              <button style={btn(active?.matchId === m.matchId ? C.sky : C.blue)}
+                onClick={() => onRecs(m)} disabled={busy}>
+                {active?.matchId === m.matchId ? '📋 Open' : '💡 Recs'}
+              </button>
+              <button style={btn(C.red)} onClick={() => onDelete(m)} disabled={busy}>✕</button>
+            </div>
+          </div>
+
+          {/* Recommendations panel */}
+          {active?.matchId === m.matchId && (
+            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '0.75rem', marginTop: 8, fontSize: 13 }}>
+              <strong style={{ color: C.green }}>💡 AI Tailoring Recommendations</strong>
+              {recs
+                ? <p style={{ margin: '8px 0 0', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{recs}</p>
+                : <p style={{ margin: '8px 0 0', color: C.textSub }}>Loading recommendations…</p>}
+            </div>
+          )}
+        </div>
+      ))}
+    </>
+  )
+}
+
+function pill(bg: string, fg = '#fff') {
+  return { display: 'inline-block' as const, background: bg, color: fg, borderRadius: 20, padding: '2px 8px', fontSize: 12, fontWeight: 600 as const }
 }

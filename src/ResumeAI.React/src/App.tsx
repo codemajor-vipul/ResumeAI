@@ -9,6 +9,8 @@ import TemplatesPage from './pages/TemplatesPage'
 import ResumeFlowPage from './pages/ResumeFlowPage'
 import JobMatchPage from './pages/JobMatchPage'
 import NotificationsPage from './pages/NotificationsPage'
+import ProfilePage from './pages/ProfilePage'
+import ExportsPage from './pages/ExportsPage'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth()
@@ -27,6 +29,8 @@ export default function App() {
         <Route path="resume" element={<ResumeFlowPage />} />
         <Route path="jobmatch" element={<JobMatchPage />} />
         <Route path="notifications" element={<NotificationsPage />} />
+        <Route path="profile" element={<ProfilePage />} />
+        <Route path="exports" element={<ExportsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -1,0 +1,10 @@
+<Project>
+  <!--
+    Redirect build artifacts outside OneDrive sync to avoid file-lock races.
+    Uses the user's home tmp folder as the base.
+  -->
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>$(HOME)/tmp/resumeai-build/$(MSBuildProjectName)/obj/</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(HOME)/tmp/resumeai-build/$(MSBuildProjectName)/bin/</BaseOutputPath>
+  </PropertyGroup>
+</Project>
